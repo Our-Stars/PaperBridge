@@ -11,7 +11,7 @@ from paperbridge.exporters.docx_exporter import export_docx
 from paperbridge.exporters.json_exporter import export_json, export_summary
 from paperbridge.exporters.markdown_exporter import export_markdown
 from paperbridge.exporters.txt_exporter import export_txt
-from paperbridge.figure_detector import detect_figures
+from paperbridge.figure_detector import detect_figures, remove_figure_overlap_blocks
 from paperbridge.layout_analyzer import build_document_structure
 from paperbridge.llm.base import LLMPageInput, LLMProvider, LLMProviderError, PageStructureResponse
 from paperbridge.llm.openai_provider import OpenAICompatibleProvider
@@ -92,6 +92,7 @@ def convert_pdf(
         document.figures = detect_figures(pdf, document.body_blocks, out_dir, options.dpi, document.warnings)
         document.tables = detect_tables(pdf, document.body_blocks, out_dir, options.dpi, document.warnings)
         bind_captions(document.body_blocks, document.figures, document.tables)
+        document.body_blocks = remove_figure_overlap_blocks(document.body_blocks, document.figures, document.tables)
         bind_body_mentions(document.body_blocks, document.figures, document.tables)
 
     if options.debug:

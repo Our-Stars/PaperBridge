@@ -137,13 +137,13 @@ def _fallback_rect(page: fitz.Page, caption: BodyBlock) -> fitz.Rect:
     else:
         x0, y0, x1, y1 = (page.rect.width * 0.1, page.rect.height * 0.45, page.rect.width * 0.9, page.rect.height * 0.55)
     caption_mid = (y0 + y1) / 2
-    horizontal_margin = page.rect.width * 0.08
+    horizontal_margin = page.rect.width * 0.04
     if caption_mid > page.rect.height * 0.5:
-        top = max(0, y0 - page.rect.height * 0.25)
+        top = max(0, y0 - page.rect.height * 0.50)
         bottom = max(top + 24, y0 - 4)
     else:
         top = min(page.rect.height - 24, y1 + 4)
-        bottom = min(page.rect.height, y1 + page.rect.height * 0.25)
+        bottom = min(page.rect.height, y1 + page.rect.height * 0.50)
     return fitz.Rect(horizontal_margin, top, page.rect.width - horizontal_margin, bottom)
 
 

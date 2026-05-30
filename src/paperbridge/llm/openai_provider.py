@@ -17,7 +17,28 @@ class OpenAICompatibleProvider:
             raise LLMConfigurationError("PAPERBRIDGE_OPENAI_API_KEY or OPENAI_API_KEY is required")
         self.config = config
         self.output_dir = output_dir
-        self.client = OpenAI(api_key=config.api_key, base_url=config.base_url, timeout=config.timeout_seconds)
+        self._llm_client: OpenAI | None = None
+        self._vlm_client: OpenAI | None = None
+
+    def _get_client(self, use_vlm: bool = False) -> OpenAI:
+        if use_vlm:
+            if self._vlm_client is None:
+                if not self.config.vlm_api_key:
+                    raise LLMConfigurationError("PAPERBRIDGE_VLM_API_KEY is required for VLM")
+                self._vlm_client = OpenAI(
+                    api_key=self.config.vlm_api_key,
+                    base_url=self.config.vlm_base_url,
+                    timeout=self.config.timeout_seconds,
+                )
+            return self._vlm_client
+        else:
+            if self._llm_client is None:
+                self._llm_client = OpenAI(
+                    api_key=self.config.api_key,
+                    base_url=self.config.base_url,
+                    timeout=self.config.timeout_seconds,
+                )
+            return self._llm_client
 
     def structure_page(self, page_input: LLMPageInput, use_vlm: bool = False) -> PageStructureResponse:
         model = self.config.vlm_model if use_vlm else self.config.llm_model
@@ -36,8 +57,9 @@ class OpenAICompatibleProvider:
         else:
             content = prompt
 
+        client = self._get_client(use_vlm)
         try:
-            response = self.client.chat.completions.create(
+            response = client.chat.completions.create(
                 model=model,
                 messages=[
                     {

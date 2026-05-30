@@ -10,6 +10,8 @@ class LLMConfig:
     base_url: str | None
     llm_model: str | None
     vlm_model: str | None
+    vlm_api_key: str | None = None
+    vlm_base_url: str | None = None
     timeout_seconds: float = 60.0
     max_tokens: int = 4096
 
@@ -25,11 +27,15 @@ class LLMConfig:
             max_tokens = max(256, int(max_tokens_raw))
         except ValueError:
             max_tokens = 4096
+        api_key = os.getenv("PAPERBRIDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        base_url = os.getenv("PAPERBRIDGE_OPENAI_BASE_URL")
         return cls(
-            api_key=os.getenv("PAPERBRIDGE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
-            base_url=os.getenv("PAPERBRIDGE_OPENAI_BASE_URL"),
+            api_key=api_key,
+            base_url=base_url,
             llm_model=os.getenv("PAPERBRIDGE_LLM_MODEL"),
             vlm_model=os.getenv("PAPERBRIDGE_VLM_MODEL"),
+            vlm_api_key=os.getenv("PAPERBRIDGE_VLM_API_KEY") or api_key,
+            vlm_base_url=os.getenv("PAPERBRIDGE_VLM_BASE_URL") or base_url,
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
         )
@@ -38,7 +44,7 @@ class LLMConfig:
         return bool(self.api_key and self.llm_model)
 
     def can_use_vlm(self) -> bool:
-        return bool(self.api_key and self.vlm_model)
+        return bool(self.vlm_api_key and self.vlm_model)
 
 
 @dataclass(frozen=True)
