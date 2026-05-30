@@ -11,7 +11,7 @@ from paperbridge.exporters.docx_exporter import export_docx
 from paperbridge.exporters.json_exporter import export_json, export_summary
 from paperbridge.exporters.markdown_exporter import export_markdown
 from paperbridge.exporters.txt_exporter import export_txt
-from paperbridge.figure_detector import detect_figures, remove_figure_overlap_blocks
+from paperbridge.figure_detector import detect_figures, remove_figure_overlap_blocks, remove_noise_figures
 from paperbridge.layout_analyzer import build_document_structure
 from paperbridge.llm.base import LLMPageInput, LLMProvider, LLMProviderError, PageStructureResponse
 from paperbridge.llm.openai_provider import OpenAICompatibleProvider
@@ -23,7 +23,7 @@ from paperbridge.pdf_loader import open_pdf
 from paperbridge.table_processor import detect_tables
 from paperbridge.text_extractor import extract_raw_blocks
 from paperbridge.utils.paths import prepare_output_dir
-from paperbridge.utils.text import clean_text
+from paperbridge.utils.text import clean_text, is_probable_caption
 from paperbridge.validators import validate_output
 
 
@@ -89,9 +89,11 @@ def convert_pdf(
 
         build_document_structure(document, all_raw_blocks)
         _maybe_apply_llm(document, all_raw_blocks, out_dir, options, config, llm_provider)
+        _fix_misclassified_captions(document)
         document.figures = detect_figures(pdf, document.body_blocks, out_dir, options.dpi, document.warnings)
         document.tables = detect_tables(pdf, document.body_blocks, out_dir, options.dpi, document.warnings)
         bind_captions(document.body_blocks, document.figures, document.tables)
+        document.figures = remove_noise_figures(document.figures, document.tables, document.body_blocks)
         document.body_blocks = remove_figure_overlap_blocks(document.body_blocks, document.figures, document.tables)
         bind_body_mentions(document.body_blocks, document.figures, document.tables)
 
@@ -127,6 +129,39 @@ def convert_pdf(
 def export_from_document(document: Document, out_dir: Path, formats: set[str]) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     return _export_outputs(document, out_dir, formats)
+
+
+def _fix_misclassified_captions(document: Document) -> None:
+    """修正 caption 分类错误。
+
+    两步：
+    1. 将误分类为 paragraph/unknown 的真正 caption 提升为 caption
+    2. 将以 "Figure X shows..." / "Table Y summarizes..." 开头的正文
+       从 caption 降级回 paragraph（可能是布局分析器的误判）
+    """
+    import re as _re
+
+    _STRICT_CAPTION_RE = _re.compile(
+        r"^\s*(?:(?:Fig\.|Figure|Table)\s+[A-Za-z0-9IVXLCDM]+(?:\.\d+)?)\s*[:.]\s+",
+        _re.IGNORECASE,
+    )
+    # 以动词开头的 "caption" 通常是正文引用，如 "Table 3 summarizes..."
+    _BODY_TEXT_CAPTION_RE = _re.compile(
+        r"^\s*(?:(?:Fig\.|Figure|Table)\s+[A-Za-z0-9IVXLCDM]+)\s+"
+        r"(?:summarizes?|shows?|illustrates?|compares?|describes?|presents?|"
+        r"lists?|details?|outlines?|demonstrates?|visuali[zs]es?|displays?|"
+        r"provides?|gives?|contains?|depicts?|reports?|highlights?|"
+        r"schematizes?|introduces?|explains?|overviews?)\b",
+        _re.IGNORECASE,
+    )
+
+    for block in document.body_blocks:
+        # 提升：paragraph/unknown → caption
+        if block.type in {"paragraph", "unknown"} and _STRICT_CAPTION_RE.match(block.text):
+            block.type = "caption"
+        # 降级：正文伪装的 caption → paragraph
+        elif block.type == "caption" and _BODY_TEXT_CAPTION_RE.match(block.text):
+            block.type = "paragraph"
 
 
 def _metadata_from_pdf(metadata: dict[str, str]) -> Metadata:

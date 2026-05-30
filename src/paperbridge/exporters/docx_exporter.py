@@ -3,9 +3,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document as DocxDocument
+import re
+
 from docx.shared import Inches
 
 from paperbridge.models import Document, Figure, Table
+
+# XML 不允许的控制字符（除了 tab、LF、CR）
+_XML_ILLEGAL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _safe(text: str) -> str:
+    return _XML_ILLEGAL_RE.sub("", text)
 
 
 def export_docx(document: Document, path: Path, base_dir: Path) -> None:
@@ -26,23 +35,23 @@ def export_docx(document: Document, path: Path, base_dir: Path) -> None:
             continue
 
         if block.type == "title":
-            docx.add_heading(document.metadata.title or block.text, level=0)
+            docx.add_heading(_safe(document.metadata.title or block.text), level=0)
         elif block.type == "subtitle":
-            docx.add_paragraph(block.text, style="Subtitle")
+            docx.add_paragraph(_safe(block.text), style="Subtitle")
         elif block.type == "abstract_heading":
             docx.add_heading("Abstract", level=1)
         elif block.type == "heading_1":
-            docx.add_heading(block.text, level=1)
+            docx.add_heading(_safe(block.text), level=1)
         elif block.type == "heading_2":
-            docx.add_heading(block.text, level=2)
+            docx.add_heading(_safe(block.text), level=2)
         elif block.type == "heading_3":
-            docx.add_heading(block.text, level=3)
+            docx.add_heading(_safe(block.text), level=3)
         elif block.type == "reference_heading":
             docx.add_heading("References", level=1)
         elif block.type == "list_item":
-            docx.add_paragraph(block.text.lstrip("-*• "), style="List Bullet")
+            docx.add_paragraph(_safe(block.text.lstrip("-*• ")), style="List Bullet")
         elif block.type in {"paragraph", "abstract", "reference_item", "equation", "unknown"}:
-            docx.add_paragraph(block.text)
+            docx.add_paragraph(_safe(block.text))
 
     for figure in document.figures:
         if figure.id not in emitted_figures:
@@ -61,26 +70,26 @@ def _append_figure(docx: DocxDocument, figure: Figure, base_dir: Path) -> None:
         if image_path.exists():
             docx.add_picture(str(image_path), width=Inches(5.8))
     if figure.caption:
-        docx.add_paragraph(figure.caption, style="Caption")
+        docx.add_paragraph(_safe(figure.caption), style="Caption")
 
 
 def _append_table(docx: DocxDocument, table: Table, base_dir: Path) -> None:
     if table.representation == "structured" and table.columns:
         if table.caption:
-            docx.add_paragraph(table.caption, style="Caption")
+            docx.add_paragraph(_safe(table.caption), style="Caption")
         docx_table = docx.add_table(rows=1, cols=len(table.columns))
         docx_table.style = "Table Grid"
         for index, column in enumerate(table.columns):
-            docx_table.rows[0].cells[index].text = column
+            docx_table.rows[0].cells[index].text = _safe(column)
         for row in table.rows:
             cells = docx_table.add_row().cells
             for index, value in enumerate(row[: len(cells)]):
-                cells[index].text = value
+                cells[index].text = _safe(value)
     elif table.image_path:
         image_path = base_dir / table.image_path
         if image_path.exists():
             docx.add_picture(str(image_path), width=Inches(5.8))
         if table.caption:
-            docx.add_paragraph(table.caption, style="Caption")
+            docx.add_paragraph(_safe(table.caption), style="Caption")
     elif table.caption:
-        docx.add_paragraph(table.caption, style="Caption")
+        docx.add_paragraph(_safe(table.caption), style="Caption")

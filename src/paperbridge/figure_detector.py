@@ -115,16 +115,20 @@ def _add_caption_fallback_figures(
             region_top, region_bottom = _scan_figure_region(caption, nearest, pg_blocks, block_by_id)
 
             margin = page.rect.width * 0.04
+            # 裁剪底部截止到 caption 上边界上方（避免图片中包含 caption 文字）
+            cap_top_abs = caption.bbox[1] * page.rect.height if caption.bbox else page.rect.height
             expanded_rect = fitz.Rect(
                 min(fig_rect.x0, margin),
                 max(0, region_top * page.rect.height),
                 max(fig_rect.x1, page.rect.width - margin),
-                min(page.rect.height, region_bottom * page.rect.height),
+                min(page.rect.height, max(region_top * page.rect.height + 24, cap_top_abs - 2)),
             )
             expanded_area = expanded_rect.width * expanded_rect.height
             fig_area = fig_rect.width * fig_rect.height
 
-            if expanded_area > fig_area * 1.1:
+            # 仅当扩展后面积不超过页面的 75% 才裁剪，避免整页截图
+            page_area = page.rect.width * page.rect.height
+            if expanded_area > fig_area * 1.1 and expanded_area < page_area * 0.75:
                 try:
                     nearest.image_path = crop_page_region(
                         page, out_dir, "assets/figures",
@@ -153,12 +157,17 @@ def _add_caption_fallback_figures(
                 ),
             )
             scan_top, scan_bottom = _scan_figure_region(caption, temp_fig, pg_blocks, block_by_id)
+            # 裁剪底部截止到 caption 上边界上方
+            cap_top_abs = caption.bbox[1] * page.rect.height if caption.bbox else page.rect.height
             final_rect = fitz.Rect(
                 fallback_rect.x0,
                 max(0, scan_top * page.rect.height),
                 fallback_rect.x1,
-                min(page.rect.height, scan_bottom * page.rect.height),
+                min(page.rect.height, max(scan_top * page.rect.height + 24, cap_top_abs - 2)),
             )
+            # 裁剪区域过小（<5% 页面高度），说明无法定位到有效图片内容（可能为矢量图）
+            if final_rect.height < page.rect.height * 0.05:
+                continue
             figure_id = f"fig_{len(figures) + 1:03d}"
             try:
                 image_path = crop_page_region(
@@ -270,6 +279,80 @@ def _fallback_rect(page: fitz.Page, caption: BodyBlock) -> fitz.Rect:
         top = min(page.rect.height - 24, y1 + 4)
         bottom = min(page.rect.height, y1 + page.rect.height * 0.50)
     return fitz.Rect(horizontal_margin, top, page.rect.width - horizontal_margin, bottom)
+
+
+def remove_noise_figures(
+    figures: list[Figure],
+    tables: list[Figure] | None = None,
+    body_blocks: list[BodyBlock] | None = None,
+) -> list[Figure]:
+    """移除噪声 figure（装饰元素、过细分隔线、封面图标等）。"""
+    kept: list[Figure] = []
+    bound_ids = {f.caption_block_id for f in figures if f.caption_block_id}
+    bound_ids.discard(None)
+    if tables:
+        bound_ids.update(t.caption_block_id for t in tables if t.caption_block_id)
+
+    # 统计每个 caption 绑定了多少个 figure
+    caption_fig_count: dict[str, int] = {}
+    for f in figures:
+        if f.caption_block_id:
+            caption_fig_count[f.caption_block_id] = caption_fig_count.get(f.caption_block_id, 0) + 1
+
+    # 识别纯参考文献页（页面上的所有非页眉/页脚块都是 reference_item）
+    reference_only_pages: set[int] = set()
+    if body_blocks:
+        page_block_types: dict[int, set[str]] = {}
+        page_total_text: dict[int, int] = {}
+        for b in body_blocks:
+            if b.type in {"header", "footer", "page_number"}:
+                continue
+            page_block_types.setdefault(b.page_start, set()).add(b.type)
+            page_total_text[b.page_start] = page_total_text.get(b.page_start, 0) + len(b.text)
+        reference_only_pages = {
+            page for page, types in page_block_types.items()
+            if types and types == {"reference_item"}
+        }
+        # 文本极少（<500字符）的页面上的无绑定图片通常为广告/装饰
+        sparse_pages = {
+            page for page, total in page_total_text.items()
+            if total < 500
+        }
+        # 最后一页（或文档最大页码）
+        last_page = max(page_block_types.keys()) if page_block_types else 0
+
+    for f in figures:
+        h = f.bbox[3] - f.bbox[1] if f.bbox and len(f.bbox) >= 4 else 0
+        w = f.bbox[2] - f.bbox[0] if f.bbox and len(f.bbox) >= 4 else 0
+        # 纯参考文献页、末页或文本稀疏页上的无绑定图片（广告/logo），移除
+        if not f.caption_block_id and f.source_page in reference_only_pages:
+            continue
+        if not f.caption_block_id and f.source_page == last_page:
+            continue
+        if not f.caption_block_id and f.source_page in sparse_pages:
+            continue
+        # 已绑定 caption 的图：仅当同一 caption 还绑定了其他更大的图时才移除这个小图
+        if f.caption_block_id and f.caption_block_id in caption_fig_count:
+            if caption_fig_count[f.caption_block_id] >= 2 and h < 0.10:
+                continue
+            # 极窄（<5%）但同一个 caption 绑了更大的图 → 此图为噪声
+            if caption_fig_count[f.caption_block_id] >= 2 and h < 0.05:
+                alt_h = max(
+                    (o.bbox[3] - o.bbox[1]) if (o.bbox and len(o.bbox) >= 4) else 0
+                    for o in figures
+                    if o.caption_block_id == f.caption_block_id and o.id != f.id
+                )
+                if alt_h > 0.05:
+                    continue
+            kept.append(f)
+            continue
+        # 未绑定 caption：极窄（<5%）为分隔线/装饰；小尺寸为噪声
+        if h < 0.05:
+            continue
+        if h < 0.10 and w < 0.6:
+            continue
+        kept.append(f)
+    return kept
 
 
 def remove_figure_overlap_blocks(

@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from paperbridge.models import BodyBlock, Figure, Table
 from paperbridge.utils.bbox import bbox_center_y
-from paperbridge.utils.text import caption_kind, caption_label
+from paperbridge.utils.text import caption_kind, caption_label, is_probable_caption
 
 
 def bind_captions(body_blocks: list[BodyBlock], figures: list[Figure], tables: list[Table]) -> None:
+    # 显式 caption 类型 + 被误分类为 paragraph/unknown 的 caption
     captions = [block for block in body_blocks if block.type == "caption"]
+    para_captions = [
+        block for block in body_blocks
+        if block.type in {"paragraph", "unknown"} and is_probable_caption(block.text)
+    ]
+    for block in para_captions:
+        block.type = "caption"
+    captions.extend(para_captions)
+
     for caption in captions:
         kind = caption_kind(caption.text)
         if kind == "figure":
