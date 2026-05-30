@@ -1,0 +1,15 @@
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+
+output/
+dist/
+build/
+*.egg-info/
+
+需求文档.txt
+CLAUDE.md
+AGENTS.md
+
